@@ -1,4 +1,4 @@
-# GPT-like Chat (React + FastAPI)
+# My-Law Chat (React + FastAPI)
 
 Monorepo:
 - `frontend/`: React (Vite)
@@ -14,7 +14,7 @@ Monorepo:
    - `python -m venv .venv`
    - `.\.venv\Scripts\activate`
    - `pip install -r requirements.txt`
-3. Run DB (Postgres) and set `DATABASE_URL` in `backend/.env`
+3. Run DB (Docker) and set `DATABASE_URL` in `backend/.env`
 4. Migrate + run:
    - `alembic upgrade head`
    - `uvicorn app.main:app --reload --port 8000`
