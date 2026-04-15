@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    container_name: gpt_like_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gpt_like
+    ports:
+      - "5432:5432"
+    volumes:
+      - gpt_like_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gpt_like"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  gpt_like_pgdata:
