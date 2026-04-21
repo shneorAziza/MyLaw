@@ -1,39 +1,23 @@
-from __future__ import annotations
-
+﻿from __future__ import annotations
 from app.skills.base import SkillContext
 
 
 class SimpleCalculatorSkill:
     name = "simple_calculator"
-    description = "Evaluates basic arithmetic: add/sub/mul/div on two numbers."
+    description = "Evaluates a simple mathematical expression and returns the result."
 
     def input_schema(self) -> dict:
         return {
             "type": "object",
             "properties": {
-                "op": {"type": "string", "enum": ["add", "sub", "mul", "div"]},
-                "a": {"type": "number"},
-                "b": {"type": "number"},
+                "expression": {"type": "string", "description": "Math expression to evaluate, e.g. '2 + 2'"}
             },
-            "required": ["op", "a", "b"],
-            "additionalProperties": False,
+            "required": ["expression"],
         }
 
     async def run(self, ctx: SkillContext, args: dict) -> dict:
-        op = args["op"]
-        a = float(args["a"])
-        b = float(args["b"])
-        if op == "add":
-            res = a + b
-        elif op == "sub":
-            res = a - b
-        elif op == "mul":
-            res = a * b
-        elif op == "div":
-            if b == 0:
-                return {"error": "division_by_zero"}
-            res = a / b
-        else:
-            return {"error": "invalid_op"}
-        return {"result": res}
-
+        try:
+            result = eval(args["expression"], {"__builtins__": {}}, {})  # noqa: S307
+            return {"result": result}
+        except Exception as e:
+            return {"error": str(e)}

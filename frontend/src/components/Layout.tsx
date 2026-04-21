@@ -41,7 +41,7 @@ export function Layout() {
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <strong style={{ flex: 1 }}>My Law</strong>
-          <button onClick={onNewChat}>New chat</button>
+          <button onClick={onNewChat}>שיחה חדשה</button>
         </div>
 
         {chatsQuery.isLoading ? (
@@ -69,7 +69,7 @@ export function Layout() {
         )}
 
         <div style={{ marginTop: 'auto' }}>
-          <button onClick={onLogout} style={{ width: '100%' }}>
+          <button onClick={onLogout} style={{ width: '100%', backgroundColor: '#dc3545', color: 'white'}}>
             Logout
           </button>
         </div>
