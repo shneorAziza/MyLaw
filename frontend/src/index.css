@@ -80,6 +80,22 @@ input:focus {
   background: #f1f5f9;
 }
 
+.miniSpinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #0f172a;
+  border-radius: 999px;
+  display: inline-block;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .md {
   font-size: 14px;
   line-height: 1.6;

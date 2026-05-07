@@ -8,6 +8,8 @@ import httpx
 
 from app.core.settings import settings
 
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -31,9 +33,40 @@ class LLMClient:
         raise NotImplementedError
 
 
-# ---------------------------------------------------------------------------
-# Stub client (ללא שינוי)
-# ---------------------------------------------------------------------------
+class LangChainGeminiClient(LLMClient):
+    def __init__(self, api_key: str, model: str):
+        self.llm = ChatGoogleGenerativeAI(
+            google_api_key=api_key,
+            model=model,
+            temperature=0,
+            convert_system_message_to_human=True 
+        )
+
+    async def generate(self, *, messages: list[dict], tools: list[dict]) -> LLMResult:
+        lc_messages = []
+        for m in messages:
+            role = m["role"]
+            content = m["content"]
+            if role == "system": lc_messages.append(SystemMessage(content=content))
+            elif role == "user": lc_messages.append(HumanMessage(content=content))
+            elif role == "assistant": lc_messages.append(AIMessage(content=content))
+
+        llm_with_tools = self.llm
+        if tools:
+            llm_with_tools = self.llm.bind_tools(tools)
+
+        res = await llm_with_tools.ainvoke(lc_messages)
+        
+        tool_calls = [
+            ToolCall(name=tc["name"], arguments=tc["args"]) 
+            for tc in res.tool_calls
+        ]
+
+        return LLMResult(
+            content=res.content,
+            tool_calls=tool_calls,
+            metadata={"provider": "langchain_gemini"}
+        )
 
 class StubLLMClient(LLMClient):
     async def generate(self, *, messages: list[dict], tools: list[dict]) -> LLMResult:
@@ -62,7 +95,7 @@ class StubLLMClient(LLMClient):
 
 
 # ---------------------------------------------------------------------------
-# Gemini client — עם תמיכה מלאה ב-function calling
+# Gemini client with full support for function calling
 # ---------------------------------------------------------------------------
 
 class GeminiLLMClient(LLMClient):
@@ -79,7 +112,7 @@ class GeminiLLMClient(LLMClient):
         return f"{self.base_url}/v1beta/models/{self.model}:streamGenerateContent"
 
     # ------------------------------------------------------------------
-    # המרת הודעות לפורמט Gemini
+    # Convert messages to Gemini format
     # ------------------------------------------------------------------
 
     def _to_gemini_contents(self, messages: list[dict]) -> list[dict]:

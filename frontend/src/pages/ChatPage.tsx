@@ -1,47 +1,52 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { MessageOut } from '../api/types'
 import { useAuth } from '../state/auth.tsx'
 
 type OptimisticMsg = MessageOut & { optimistic?: true }
 
+type AttachmentMetadata = {
+  document_id?: string
+  file_name?: string
+  file_type?: string
+  chunks_count?: number
+}
+
+type TimelineItem = { kind: 'date'; label: string } | { kind: 'msg'; msg: MessageOut }
+
 function isSameDay(a: string, b: string) {
   return new Date(a).toDateString() === new Date(b).toDateString()
 }
 
-// ─── Tool Bubble ────────────────────────────────────────────────────────────
+function getAttachment(msg: MessageOut): AttachmentMetadata | null {
+  const attachment = msg.metadata_json?.attachment
+  if (!attachment || typeof attachment !== 'object') return null
+  return attachment as AttachmentMetadata
+}
 
 function ToolBubble({ content }: { content: string }) {
   const [open, setOpen] = useState(false)
 
-  // חלץ את שם הסקיל מה-JSON שמגיע מה-backend
   const skillName = useMemo(() => {
     try {
       const parsed = JSON.parse(content)
-      // הפורמט שמחזיר הסקיל שלנו: { skill: "skill_name", ... }
       if (parsed?.skill) return parsed.skill
-      // גיבוי: metadata_json
       if (parsed?.metadata?.skill) return parsed.metadata.skill
     } catch {
-      // תוכן גולמי — ננסה regex
       const match = content.match(/'skill':\s*'([^']+)'|"skill":\s*"([^"]+)"/)
       if (match) return match[1] || match[2]
     }
     return 'skill'
   }, [content])
 
-  // הצג שם ידידותי
-  const displayName = skillName
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c: string) => c.toUpperCase())
+  const displayName = skillName.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
 
   return (
     <div style={{ alignSelf: 'flex-start', maxWidth: '80%' }}>
-      {/* שורת הכותרת — תמיד גלויה */}
       <button
         onClick={() => setOpen((o) => !o)}
         style={{
@@ -57,6 +62,7 @@ function ToolBubble({ content }: { content: string }) {
           fontSize: 12,
           fontFamily: 'inherit',
         }}
+        type="button"
       >
         <span
           style={{
@@ -66,13 +72,14 @@ function ToolBubble({ content }: { content: string }) {
             fontSize: 10,
           }}
         >
-          ▶
+          {'>'}
         </span>
-        <span style={{ color: '#7c3aed', fontWeight: 600 }}>⚡</span>
-        <span>שימוש בסקיל: <strong>{displayName}</strong></span>
+        <span style={{ color: '#7c3aed', fontWeight: 600 }}>*</span>
+        <span>
+          Skill used: <strong>{displayName}</strong>
+        </span>
       </button>
 
-      {/* תוכן מפורט — נפתח בלחיצה */}
       {open && (
         <div
           style={{
@@ -86,9 +93,7 @@ function ToolBubble({ content }: { content: string }) {
           }}
         >
           <div className="md">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {formatToolContent(content)}
-            </ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatToolContent(content)}</ReactMarkdown>
           </div>
         </div>
       )}
@@ -96,29 +101,44 @@ function ToolBubble({ content }: { content: string }) {
   )
 }
 
-// המר את תוכן ה-tool ל-markdown קריא
 function formatToolContent(raw: string): string {
   try {
-    // 1. ניסיון ראשון: פענוח כ-JSON תקני
-    const parsed = JSON.parse(raw);
-    if (parsed?.knowledge) return parsed.knowledge;
-    return '```json\n' + JSON.stringify(parsed, null, 2) + '\n```';
+    const parsed = JSON.parse(raw)
+    if (parsed?.knowledge) return parsed.knowledge
+    return '```json\n' + JSON.stringify(parsed, null, 2) + '\n```'
   } catch {
-    // 2. ניסיון שני: חילוץ ידני של תוכן ה-knowledge (עבור אובייקטים עם גרשיים בודדים)
-    // אנחנו מחפשים את מה שבין 'knowledge': ' לבין הסגירה שלו
-    const knowledgeMatch = raw.match(/['"]knowledge['"]:\s*['"]([\s\S]*?)['"]\s*,\s*['"]user_question['"]/);
-    
-    if (knowledgeMatch && knowledgeMatch[1]) {
-      // טיפול בתווי מילוט כמו n\
-      return knowledgeMatch[1].replace(/\\n/g, '\n').replace(/\\'/g, "'");
+    const knowledgeMatch = raw.match(/['"]knowledge['"]:\s*['"]([\s\S]*?)['"]\s*,\s*['"]user_question['"]/)
+    if (knowledgeMatch?.[1]) {
+      return knowledgeMatch[1].replace(/\\n/g, '\n').replace(/\\'/g, "'")
     }
-
-    // 3. אם זה אובייקט כללי, ננסה להפוך אותו לקריא יותר ע"י ירידות שורה בסיסיות
-    return raw.replace(/', '/g, "',\n'").replace(/{'/g, "{\n'");
+    return raw.replace(/', '/g, "',\n'").replace(/{'/g, "{\n'")
   }
 }
 
-// ─── ChatPage ────────────────────────────────────────────────────────────────
+function AttachmentBubble({ msg }: { msg: MessageOut }) {
+  const attachment = getAttachment(msg)
+  if (!attachment) return null
+
+  return (
+    <div
+      className="msgBubble msgUser"
+      style={{
+        alignSelf: 'flex-end',
+        maxWidth: '80%',
+        display: 'grid',
+        gap: 6,
+      }}
+    >
+      <div style={{ fontSize: 12, color: '#6b7280' }}>
+        {attachment.file_type?.startsWith('image/') ? 'Image attached' : 'Document attached'}
+      </div>
+      <div style={{ fontWeight: 700, overflowWrap: 'anywhere' }}>{attachment.file_name ?? msg.content}</div>
+      <div style={{ color: '#475569', fontSize: 13 }}>
+        Indexed for this chat ({attachment.chunks_count ?? 0} chunks)
+      </div>
+    </div>
+  )
+}
 
 export function ChatPage() {
   const { token } = useAuth()
@@ -128,8 +148,10 @@ export function ChatPage() {
   const [text, setText] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null)
   const [optimistic, setOptimistic] = useState<OptimisticMsg[]>([])
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const messagesQuery = useQuery({
     queryKey: ['messages', chatId],
@@ -147,6 +169,39 @@ export function ChatPage() {
       ])
     },
   })
+
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => api.uploadDocument(token!, file, chatId!),
+    onMutate: (file) => {
+      setUploadNotice(`Uploading and indexing ${file.name}...`)
+    },
+    onSuccess: async () => {
+      setUploadNotice(null)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['messages', chatId] }),
+        qc.invalidateQueries({ queryKey: ['chats'] }),
+      ])
+    },
+    onError: (e) => {
+      const msg = e instanceof ApiError ? e.message : 'Upload failed'
+      setUploadNotice(msg)
+    },
+  })
+
+  const onPickFile = () => {
+    fileInputRef.current?.click()
+  }
+
+  const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.type !== 'application/pdf' && !file.type.startsWith('image/')) {
+      setUploadNotice('Only PDF and image files are supported')
+      return
+    }
+    uploadMutation.mutate(file)
+  }
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -196,7 +251,7 @@ export function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messagesQuery.data, sendMutation.isPending, streaming, streamText])
+  }, [messagesQuery.data, sendMutation.isPending, streaming, streamText, uploadMutation.isPending])
 
   const mergedMessages = useMemo(() => {
     const server = messagesQuery.data ?? []
@@ -205,15 +260,14 @@ export function ChatPage() {
   }, [messagesQuery.data, optimistic])
 
   const items = useMemo(() => {
-    const msgs = mergedMessages
-    const grouped: Array<{ kind: 'date'; label: string } | { kind: 'msg'; msg: MessageOut }> = []
+    const grouped: TimelineItem[] = []
     let lastDate: string | null = null
-    for (const m of msgs) {
-      if (!lastDate || !isSameDay(lastDate, m.created_at)) {
-        lastDate = m.created_at
+    for (const msg of mergedMessages) {
+      if (!lastDate || !isSameDay(lastDate, msg.created_at)) {
+        lastDate = msg.created_at
         grouped.push({ kind: 'date', label: new Date(lastDate).toLocaleDateString() })
       }
-      grouped.push({ kind: 'msg', msg: m })
+      grouped.push({ kind: 'msg', msg })
     }
     return grouped
   }, [mergedMessages])
@@ -221,29 +275,30 @@ export function ChatPage() {
   if (!chatId) {
     return (
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <h2 style={{ marginTop: 0 }}>התחל שיחה חדשה</h2>
+        <h2 style={{ marginTop: 0 }}>Start a new chat</h2>
         <button
           onClick={async () => {
             const created = await api.createChat(token!)
             qc.invalidateQueries({ queryKey: ['chats'] })
             nav(`/c/${created.chat.id}`)
           }}
+          type="button"
         >
-          צור שיחה
+          Create chat
         </button>
       </div>
     )
   }
 
   if (messagesQuery.isError) {
-    return <div style={{ color: '#b91c1c' }}>שגיאה בטעינת הודעות</div>
+    return <div style={{ color: '#b91c1c' }}>Failed to load messages</div>
   }
 
   return (
     <div style={{ display: 'grid', gridTemplateRows: '1fr auto', height: 'calc(100vh - 32px)' }}>
       <div style={{ overflow: 'auto', paddingRight: 8 }}>
         {messagesQuery.isLoading ? (
-          <div>טוען…</div>
+          <div>Loading...</div>
         ) : (
           <div
             style={{
@@ -262,11 +317,11 @@ export function ChatPage() {
                 >
                   {it.label}
                 </div>
+              ) : getAttachment(it.msg) ? (
+                <AttachmentBubble key={it.msg.id} msg={it.msg} />
               ) : it.msg.role === 'tool' ? (
-                // ── הודעת tool — bubble מיוחד עם accordion ──
                 <ToolBubble key={it.msg.id} content={it.msg.content} />
               ) : (
-                // ── הודעות רגילות: user / assistant ──
                 <div
                   key={it.msg.id}
                   className={`msgBubble ${it.msg.role === 'user' ? 'msgUser' : 'msgAssistant'}`}
@@ -275,9 +330,8 @@ export function ChatPage() {
                     maxWidth: '80%',
                   }}
                 >
-                  {/* תווית שולח */}
                   <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>
-                    {it.msg.role === 'user' ? 'אתה' : 'My Law'}
+                    {it.msg.role === 'user' ? 'You' : 'My Law'}
                   </div>
 
                   {it.msg.role === 'assistant' ? (
@@ -291,20 +345,15 @@ export function ChatPage() {
               ),
             )}
 
-            {/* מצב המתנה */}
             {sendMutation.isPending ? (
-              <div style={{ color: '#6b7280', fontSize: 13 }}>My Law חושב…</div>
+              <div style={{ color: '#6b7280', fontSize: 13 }}>My Law is thinking...</div>
             ) : null}
 
-            {/* streaming bubble */}
             {streaming ? (
-              <div
-                className="msgBubble msgAssistant"
-                style={{ alignSelf: 'flex-start', maxWidth: '80%' }}
-              >
+              <div className="msgBubble msgAssistant" style={{ alignSelf: 'flex-start', maxWidth: '80%' }}>
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>My Law</div>
                 <div className="md">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamText || '…'}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamText || '...'}</ReactMarkdown>
                 </div>
               </div>
             ) : null}
@@ -315,25 +364,73 @@ export function ChatPage() {
       </div>
 
       <form onSubmit={onSubmit} style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-        <div style={{ maxWidth: 860, margin: '0 auto', display: 'flex', gap: 8 }}>
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="שאל שאלה משפטית…"
-            style={{ flex: 1 }}
-          />
-          <button disabled={sendMutation.isPending || streaming} type="submit" style={{
-            backgroundColor: (sendMutation.isPending || streaming) ? '#a8d5ba' : '#4CAF50',
-            color: 'white',
-            padding: '10px 20px',
-            border: 'none',
-            borderRadius: '5px',
-            cursor: (sendMutation.isPending || streaming) ? 'not-allowed' : 'pointer',
-            transition: 'background-color 0.3s ease', // אנימציה חלקה למעבר צבע
-            opacity: (sendMutation.isPending || streaming) ? 0.7 : 1
-  }}>
-            שלח
-          </button>
+        <div style={{ maxWidth: 860, margin: '0 auto' }}>
+          {uploadNotice ? (
+            <div
+              style={{
+                color: uploadMutation.isError ? '#b91c1c' : '#475569',
+                fontSize: 13,
+                marginBottom: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              {uploadMutation.isPending ? <span className="miniSpinner" /> : null}
+              <span>{uploadNotice}</span>
+            </div>
+          ) : null}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,.pdf,image/*"
+              onChange={onFileChange}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              onClick={onPickFile}
+              disabled={uploadMutation.isPending || sendMutation.isPending || streaming}
+              title="Upload PDF or image"
+              style={{
+                minWidth: 54,
+                backgroundColor: uploadMutation.isPending ? '#e2e8f0' : '#ffffff',
+                color: '#0f172a',
+                borderColor: '#cbd5e1',
+                padding: '10px 12px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+              }}
+            >
+              {uploadMutation.isPending ? <span className="miniSpinner" /> : null}
+              File
+            </button>
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Ask a legal question..."
+              style={{ flex: 1 }}
+            />
+            <button
+              disabled={sendMutation.isPending || streaming}
+              type="submit"
+              style={{
+                backgroundColor: sendMutation.isPending || streaming ? '#a8d5ba' : '#4CAF50',
+                color: 'white',
+                padding: '10px 20px',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: sendMutation.isPending || streaming ? 'not-allowed' : 'pointer',
+                transition: 'background-color 0.3s ease',
+                opacity: sendMutation.isPending || streaming ? 0.7 : 1,
+              }}
+            >
+              Send
+            </button>
+          </div>
         </div>
       </form>
     </div>

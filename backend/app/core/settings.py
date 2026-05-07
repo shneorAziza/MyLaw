@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
+    llm_embedding_model: str = "models/gemini-embedding-001"
     llm_thinking_level: str = "minimal"
 
     @property
@@ -23,4 +24,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

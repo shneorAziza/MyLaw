@@ -9,6 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
+from sqlalchemy import Column, Integer  
+from pgvector.sqlalchemy import Vector
+
 
 class User(Base):
     __tablename__ = "users"
@@ -65,3 +68,30 @@ class SkillInvocation(Base):
 
     message: Mapped["Message"] = relationship(back_populates="skill_invocations")
 
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    chat_id: Mapped[str | None] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"), index=True, nullable=True)
+    
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    embeddings: Mapped[list["DocumentEmbedding"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+
+
+class DocumentEmbedding(Base):
+    __tablename__ = "document_embeddings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    
+    content: Mapped[str] = mapped_column(Text, nullable=False) 
+    
+    # Google Gemini embedding vectors.
+    embedding: Mapped[Vector] = mapped_column(Vector(3072))
+
+    document: Mapped["Document"] = relationship(back_populates="embeddings")

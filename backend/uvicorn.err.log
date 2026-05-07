@@ -1,0 +1,16 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\LENOVO\\Documents\\My Law\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [21104] using WatchFiles
+INFO:     Started server process [13244]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app\api\messages.py', 'app\api\uploads.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for connections to close. (CTRL+C to force quit)
+INFO:     Waiting for background tasks to complete. (CTRL+C to force quit)
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [13244]
+INFO:     Started server process [2784]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.

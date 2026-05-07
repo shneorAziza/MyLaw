@@ -30,3 +30,18 @@ export type SendMessageOut = {
   message_ids: string[]
 }
 
+export type UploadDocumentOut = {
+  id: string
+  filename: string
+  chunks_count: number
+  message_id?: string | null
+  status: 'success_and_indexed'
+}
+
+export type DocumentSearchHit = {
+  document_id: string
+  file_name: string
+  chunk_id: number
+  content: string
+  score: number
+}

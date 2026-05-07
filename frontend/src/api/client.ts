@@ -1,7 +1,15 @@
-import type { ChatOut, MessageOut, SendMessageOut, TokenOut, UserOut } from './types'
+import type {
+  ChatOut,
+  DocumentSearchHit,
+  MessageOut,
+  SendMessageOut,
+  TokenOut,
+  UploadDocumentOut,
+  UserOut,
+} from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
-const USE_STREAMING = (import.meta.env.VITE_USE_STREAMING ?? '').toString() === 'true'
+const USE_STREAMING = (import.meta.env.VITE_USE_STREAMING ?? 'true').toString() === 'true'
 
 export class ApiError extends Error {
   status: number
@@ -66,6 +74,38 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
+  uploadDocument: async (token: string, file: File, chatId?: string | null) => {
+    const form = new FormData()
+    form.append('file', file)
+
+    const query = chatId ? `?chat_id=${encodeURIComponent(chatId)}` : ''
+    const res = await fetch(`${API_BASE}/uploads/${query}`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: form,
+    })
+
+    const text = await res.text()
+    const body = text ? (JSON.parse(text) as unknown) : null
+    if (!res.ok) {
+      if (res.status === 401) handleUnauthorized()
+      const msg = (body as any)?.detail ?? `Request failed: ${res.status}`
+      throw new ApiError(res.status, msg, body)
+    }
+    return body as UploadDocumentOut
+  },
+
+  searchDocuments: (token: string, query: string, options: { chatId?: string | null; limit?: number } = {}) =>
+    request<DocumentSearchHit[]>('/uploads/search', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        query,
+        chat_id: options.chatId ?? null,
+        limit: options.limit ?? 5,
+      }),
+    }),
+
   useStreaming: () => USE_STREAMING,
 
   streamSendMessage: async (
@@ -113,4 +153,3 @@ export const api = {
     }
   },
 }
-

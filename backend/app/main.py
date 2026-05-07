@@ -9,10 +9,11 @@ from app.api.messages import router as messages_router
 from app.api.skills import router as skills_router
 from app.core.settings import settings
 from app.skills.loader import load_builtin_skills
+from app.api.uploads import router as uploads_router
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="GPT-like API")
+    app = FastAPI(title="My Law API")
 
     app.add_middleware(
         CORSMiddleware,
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(chats_router)
     app.include_router(messages_router)
     app.include_router(skills_router)
+    app.include_router(uploads_router)
 
     @app.get("/health")
     def health() -> dict:

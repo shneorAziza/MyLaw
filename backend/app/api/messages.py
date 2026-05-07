@@ -11,11 +11,47 @@ from app.api.deps import CurrentUserDep, DbDep
 from app.api.schemas import MessageOut, SendMessageIn, SendMessageOut
 from app.db.models import Chat, Message
 from app.db.session import SessionLocal
+from app.services.documents import DocumentService
 from app.services.llm import get_llm_client
 from app.skills.registry import registry  # tool registry (used by non-streaming endpoint)
 
 
 router = APIRouter(prefix="/chats/{chat_id}/messages", tags=["messages"])
+
+
+async def build_document_context(
+    *,
+    db,
+    user_id: str,
+    chat_id: str,
+    question: str,
+) -> str | None:
+    try:
+        document_service = DocumentService(db)
+        if not document_service.has_indexed_documents(user_id=user_id, chat_id=chat_id):
+            return None
+
+        hits = await document_service.search_similar(
+            query=question,
+            user_id=user_id,
+            chat_id=chat_id,
+            limit=5,
+        )
+    except Exception:
+        return None
+
+    if not hits:
+        return None
+
+    context_blocks = [
+        f"[{idx}] {hit['file_name']} (score: {hit['score']:.3f})\n{hit['content']}"
+        for idx, hit in enumerate(hits, start=1)
+    ]
+    return (
+        "Relevant document excerpts for this user question are below. "
+        "Use them when helpful, but do not invent facts that are not supported by them.\n\n"
+        + "\n\n---\n\n".join(context_blocks)
+    )
 
 
 @router.get("", response_model=list[MessageOut])
@@ -39,6 +75,17 @@ async def send_message(chat_id: str, data: SendMessageIn, db: DbDep, current_use
     db.flush()
 
     history = db.scalars(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.asc())).all()
+    document_context = await build_document_context(
+        db=db,
+        user_id=current_user.id,
+        chat_id=chat_id,
+        question=data.content,
+    )
+    if document_context:
+        history = [
+            Message(chat_id=chat_id, role="system", content=document_context, metadata_json={"rag": True}),
+            *history,
+        ]
 
     # Non-streaming path uses the orchestrator (supports /tool execution)
     from app.services.orchestrator import ChatOrchestrator
@@ -78,6 +125,17 @@ async def send_message_stream(
             history = stream_db.scalars(
                 select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.asc())
             ).all()
+            document_context = await build_document_context(
+                db=stream_db,
+                user_id=current_user.id,
+                chat_id=chat_id,
+                question=data.content,
+            )
+            if document_context:
+                history = [
+                    Message(chat_id=chat_id, role="system", content=document_context, metadata_json={"rag": True}),
+                    *history,
+                ]
 
             llm = get_llm_client()
             tool_specs = registry.list_specs()
@@ -86,11 +144,28 @@ async def send_message_stream(
             yield f"data: {json.dumps({'type': 'start', 'message_id': 'pending'})}\n\n"
 
             full_text = ""
-            async for delta in llm.stream_text(messages=llm_messages, tools=tool_specs):
-                if not delta:
-                    continue
-                full_text += delta
-                yield f"data: {json.dumps({'type': 'delta', 'delta': delta})}\n\n"
+            try:
+                # Gemini can stream a function call with no text in AUTO tool mode.
+                # For the typing UI, prefer a text-only stream and fall back to a full
+                # non-streaming answer if the stream still ends empty.
+                async for delta in llm.stream_text(messages=llm_messages, tools=[]):
+                    if not delta:
+                        continue
+                    full_text += delta
+                    yield f"data: {json.dumps({'type': 'delta', 'delta': delta})}\n\n"
+
+                if not full_text.strip():
+                    fallback = await llm.generate(messages=llm_messages, tools=[])
+                    full_text = fallback.content.strip()
+                    if full_text:
+                        yield f"data: {json.dumps({'type': 'delta', 'delta': full_text})}\n\n"
+            except Exception as e:  # noqa: BLE001
+                full_text = f"שגיאה ביצירת תשובה: {e}"
+                yield f"data: {json.dumps({'type': 'delta', 'delta': full_text})}\n\n"
+
+            if not full_text.strip():
+                full_text = "לא הצלחתי לייצר תשובה כרגע. נסה לשלוח שוב או לנסח מחדש את השאלה."
+                yield f"data: {json.dumps({'type': 'delta', 'delta': full_text})}\n\n"
 
             assistant_msg = Message(
                 chat_id=chat_id,
@@ -114,7 +189,9 @@ async def send_message_stream(
                 + json.dumps(
                     {
                         "type": "done",
-                        "assistant_message": MessageOut.model_validate(assistant_msg, from_attributes=True).model_dump(),
+                        "assistant_message": MessageOut.model_validate(
+                            assistant_msg, from_attributes=True
+                        ).model_dump(mode="json"),
                         "message_ids": [user_msg.id, assistant_msg.id],
                     }
                 )
@@ -124,4 +201,3 @@ async def send_message_stream(
             stream_db.close()
 
     return StreamingResponse(gen(), media_type="text/event-stream")
-
