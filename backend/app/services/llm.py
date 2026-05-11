@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 
 import httpx
 
 from app.core.settings import settings
+from app.services.gemini_errors import parse_gemini_error
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -22,6 +26,12 @@ class LLMResult:
     content: str
     tool_calls: list[ToolCall]
     metadata: dict
+
+
+@dataclass(frozen=True)
+class LLMStreamChunk:
+    delta: str
+    metadata: dict | None = None
 
 
 class LLMClient:
@@ -94,6 +104,154 @@ class StubLLMClient(LLMClient):
         yield res.content
 
 
+class OpenAILLMClient(LLMClient):
+    def __init__(self, *, api_key: str, model: str, base_url: str | None = None):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = (base_url or "https://api.openai.com").rstrip("/")
+
+    def _endpoint(self) -> str:
+        return f"{self.base_url}/v1/chat/completions"
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+
+    def _to_openai_messages(self, messages: list[dict]) -> list[dict]:
+        result = []
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content") or ""
+            if role == "tool":
+                result.append({"role": "user", "content": f"[TOOL RESULT]\n{content}"})
+            elif role in {"system", "user", "assistant"}:
+                result.append({"role": role, "content": content})
+        return result
+
+    def _to_openai_tools(self, tools: list[dict]) -> list[dict] | None:
+        if not tools:
+            return None
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
+                },
+            }
+            for tool in tools
+        ]
+
+    def _parse_error(self, *, status_code: int, body: str | bytes, operation: str) -> LLMResult:
+        text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = {}
+        message = ((data.get("error") or {}).get("message") if isinstance(data, dict) else None) or text
+        if status_code == 401:
+            content = "מפתח ה-API של OpenAI חסר או לא תקין. בדוק את OPENAI_API_KEY בקובץ .env."
+        elif status_code == 429:
+            content = "הגענו זמנית למגבלת השימוש של OpenAI. אפשר לנסות שוב מאוחר יותר או לבדוק quota/billing."
+        else:
+            content = "הייתה שגיאה זמנית מול OpenAI. אפשר לנסות שוב בעוד רגע."
+        return LLMResult(
+            content=content,
+            tool_calls=[],
+            metadata={
+                "error": True,
+                "provider": "openai",
+                "error_code": status_code,
+                "error_message": message,
+                "model": self.model,
+                "operation": operation,
+            },
+        )
+
+    async def generate(self, *, messages: list[dict], tools: list[dict]) -> LLMResult:
+        if not self.api_key:
+            return LLMResult(
+                content="מפתח ה-API של OpenAI חסר. הוסף OPENAI_API_KEY בקובץ backend/.env.",
+                tool_calls=[],
+                metadata={"error": True, "provider": "openai", "error_code": "missing_api_key"},
+            )
+
+        body: dict = {
+            "model": self.model,
+            "messages": self._to_openai_messages(messages),
+        }
+        openai_tools = self._to_openai_tools(tools)
+        if openai_tools:
+            body["tools"] = openai_tools
+            body["tool_choice"] = "auto"
+
+        start = time.perf_counter()
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.post(self._endpoint(), headers=self._headers(), json=body)
+        latency_ms = int((time.perf_counter() - start) * 1000)
+
+        if res.status_code >= 400:
+            result = self._parse_error(status_code=res.status_code, body=res.text, operation="chat")
+            result.metadata["latency_ms"] = latency_ms
+            return result
+
+        data = res.json()
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        tool_calls = []
+        for tc in message.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            if not name:
+                continue
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(name=name, arguments=args))
+
+        return LLMResult(
+            content=message.get("content") or "",
+            tool_calls=tool_calls,
+            metadata={"provider": "openai", "model": self.model, "latency_ms": latency_ms},
+        )
+
+    async def stream_text(self, *, messages: list[dict], tools: list[dict]):
+        if not self.api_key:
+            yield LLMStreamChunk(
+                delta="מפתח ה-API של OpenAI חסר. הוסף OPENAI_API_KEY בקובץ backend/.env.",
+                metadata={"error": True, "provider": "openai", "error_code": "missing_api_key"},
+            )
+            return
+
+        body: dict = {
+            "model": self.model,
+            "messages": self._to_openai_messages(messages),
+            "stream": True,
+        }
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream("POST", self._endpoint(), headers=self._headers(), json=body) as res:
+                if res.status_code >= 400:
+                    result = self._parse_error(status_code=res.status_code, body=await res.aread(), operation="chat")
+                    yield LLMStreamChunk(delta=result.content, metadata=result.metadata)
+                    return
+
+                async for line in res.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:"):].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = (((data.get("choices") or [{}])[0].get("delta") or {}).get("content")) or ""
+                    if delta:
+                        yield delta
+
+
 # ---------------------------------------------------------------------------
 # Gemini client with full support for function calling
 # ---------------------------------------------------------------------------
@@ -110,6 +268,16 @@ class GeminiLLMClient(LLMClient):
 
     def _stream_endpoint(self) -> str:
         return f"{self.base_url}/v1beta/models/{self.model}:streamGenerateContent"
+
+    def _generation_config(self) -> dict:
+        thinking_level = (self.thinking_level or "").strip().lower()
+        if not thinking_level:
+            return {}
+        if self.model.startswith("gemini-3"):
+            return {"thinkingConfig": {"thinkingLevel": thinking_level}}
+        if thinking_level in {"minimal", "none", "off"}:
+            return {"thinkingConfig": {"thinkingBudget": 0}}
+        return {}
 
     # ------------------------------------------------------------------
     # Convert messages to Gemini format
@@ -285,6 +453,9 @@ class GeminiLLMClient(LLMClient):
         body: dict = {
             "contents": self._to_gemini_contents(messages),
         }
+        generation_config = self._generation_config()
+        if generation_config:
+            body["generationConfig"] = generation_config
 
         # הוספת tools לבקשה רק אם יש סקילס רשומים
         gemini_tools = self._to_gemini_tools(tools)
@@ -303,10 +474,17 @@ class GeminiLLMClient(LLMClient):
         latency_ms = int((time.perf_counter() - start) * 1000)
 
         if res.status_code >= 400:
+            error = parse_gemini_error(
+                status_code=res.status_code,
+                body=res.text,
+                model=self.model,
+                operation="chat",
+            )
+            logger.warning("gemini_generate_failed", extra=error.metadata())
             return LLMResult(
-                content=f"Gemini error {res.status_code}: {res.text}",
+                content=error.user_message,
                 tool_calls=[],
-                metadata={"gemini": True, "latency_ms": latency_ms},
+                metadata={**error.metadata(), "latency_ms": latency_ms},
             )
 
         text, tool_calls = self._parse_response(res.json())
@@ -337,6 +515,9 @@ class GeminiLLMClient(LLMClient):
         body: dict = {
             "contents": self._to_gemini_contents(messages),
         }
+        generation_config = self._generation_config()
+        if generation_config:
+            body["generationConfig"] = generation_config
 
         gemini_tools = self._to_gemini_tools(tools)
         if gemini_tools:
@@ -350,11 +531,22 @@ class GeminiLLMClient(LLMClient):
             async with client.stream(
                 "POST",
                 self._stream_endpoint(),
-                headers={"x-goog-api-key": self.api_key},
+                params={"alt": "sse"},
+                headers={
+                    "accept": "text/event-stream",
+                    "x-goog-api-key": self.api_key,
+                },
                 json=body,
             ) as res:
                 if res.status_code >= 400:
-                    yield f"Gemini error {res.status_code}: {await res.aread()}"
+                    error = parse_gemini_error(
+                        status_code=res.status_code,
+                        body=await res.aread(),
+                        model=self.model,
+                        operation="chat",
+                    )
+                    logger.warning("gemini_stream_failed", extra=error.metadata())
+                    yield LLMStreamChunk(delta=error.user_message, metadata=error.metadata())
                     return
 
                 async for line in res.aiter_lines():
@@ -392,12 +584,18 @@ class GeminiLLMClient(LLMClient):
 # Factory
 # ---------------------------------------------------------------------------
 
-def get_llm_client() -> LLMClient:
-    provider = (settings.llm_provider or "stub").lower().strip()
+def get_llm_client(provider_override: str | None = None) -> LLMClient:
+    provider = (provider_override or settings.llm_provider or "stub").lower().strip()
+    if provider in {"openai", "gpt"}:
+        return OpenAILLMClient(
+            api_key=settings.openai_api_key,
+            model=settings.openai_chat_model or "gpt-4o-mini",
+            base_url=settings.openai_base_url or "https://api.openai.com",
+        )
     if provider in {"gemini", "google"}:
         return GeminiLLMClient(
             api_key=settings.llm_api_key,
-            model=settings.llm_model or "gemini-2.0-flash",
+            model=settings.llm_chat_model or settings.llm_model or "gemini-2.0-flash",
             base_url=settings.llm_base_url or "https://generativelanguage.googleapis.com",
             thinking_level=settings.llm_thinking_level or "minimal",
         )

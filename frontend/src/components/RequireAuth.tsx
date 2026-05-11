@@ -7,4 +7,3 @@ export function RequireAuth() {
   if (!token) return <Navigate to="/login" replace state={{ from: loc.pathname }} />
   return <Outlet />
 }
-

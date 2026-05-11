@@ -13,6 +13,10 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+html {
+  direction: rtl;
+}
+
 a {
   font-weight: 500;
   color: #646cff;
@@ -27,6 +31,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background: #f8fafc;
+  direction: rtl;
+  text-align: right;
 }
 
 button {
@@ -61,6 +67,7 @@ input {
   font-size: 14px;
   background: #ffffff;
   color: #0f172a;
+  direction: rtl;
 }
 input:focus {
   outline: 3px solid rgba(79, 70, 229, 0.35);
@@ -111,7 +118,8 @@ input:focus {
 .md ul,
 .md ol {
   margin: 0.4em 0;
-  padding-left: 1.25em;
+  padding-right: 1.25em;
+  padding-left: 0;
 }
 .md li {
   margin: 0.2em 0;
@@ -130,6 +138,85 @@ input:focus {
 .md blockquote {
   margin: 0.6em 0;
   padding: 0.2em 0.8em;
-  border-left: 3px solid #cbd5e1;
+  border-right: 3px solid #cbd5e1;
   color: #334155;
+}
+
+.landingPage {
+  min-height: 100vh;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.landingHero {
+  min-height: 72vh;
+  display: flex;
+  align-items: center;
+  background:
+    linear-gradient(rgba(248, 250, 252, 0.88), rgba(248, 250, 252, 0.94)),
+    url('https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=1800&q=80') center/cover;
+}
+
+.landingInner {
+  width: min(1080px, calc(100% - 40px));
+  margin: 0 auto;
+}
+
+.landingNav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 28px 0;
+}
+
+.landingHeroText {
+  max-width: 760px;
+  padding: 56px 0 90px;
+}
+
+.landingHeroText h1 {
+  font-size: clamp(36px, 5vw, 68px);
+  line-height: 1.05;
+  margin: 0 0 20px;
+}
+
+.landingHeroText p,
+.landingBand p {
+  font-size: 18px;
+  color: #334155;
+  max-width: 760px;
+}
+
+.landingActions,
+.landingLinks {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+
+.landingBand {
+  padding: 56px 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.landingGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 48px;
+}
+
+.landingAbout {
+  background: #ffffff;
+}
+
+@media (max-width: 760px) {
+  .landingGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .landingHeroText {
+    padding: 36px 0 64px;
+  }
 }

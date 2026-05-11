@@ -18,9 +18,9 @@ export function LoginPage() {
     try {
       const tok = await api.login(email, password)
       setToken(tok.access_token)
-      nav('/')
+      nav('/chat')
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Login failed'
+      const msg = e instanceof ApiError ? e.message : 'הכניסה נכשלה'
       setError(msg)
     } finally {
       setLoading(false)
@@ -29,14 +29,14 @@ export function LoginPage() {
 
   return (
     <div style={{ maxWidth: 420, margin: '12vh auto', padding: 20, border: '1px solid #e5e7eb', borderRadius: 12 }}>
-      <h2 style={{ marginTop: 0 }}>Login</h2>
+      <h2 style={{ marginTop: 0 }}>כניסה</h2>
       <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <label>
-          Email
+          אימייל
           <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required style={{ width: '100%' }} />
         </label>
         <label>
-          Password
+          סיסמה
           <input
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -48,13 +48,17 @@ export function LoginPage() {
         </label>
         {error ? <div style={{ color: '#b91c1c' }}>{error}</div> : null}
         <button disabled={loading} type="submit">
-          {loading ? 'Logging in…' : 'Login'}
+          {loading ? 'מתחבר...' : 'כניסה'}
         </button>
       </form>
       <div style={{ marginTop: 12 }}>
-        No account? <Link to="/register">Register</Link>
+        אין חשבון? <Link to="/register">הרשמה</Link>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <button type="button" onClick={() => nav('/')} style={{ width: '100%', backgroundColor: '#ffffff', color: '#0f172a' }}>
+          כניסה כאורח
+        </button>
       </div>
     </div>
   )
 }
-

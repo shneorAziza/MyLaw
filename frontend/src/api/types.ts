@@ -9,8 +9,16 @@ export type UserOut = {
   created_at: string
 }
 
+export type ProjectOut = {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+}
+
 export type ChatOut = {
   id: string
+  project_id: string
   title: string
   created_at: string
   updated_at: string
@@ -29,6 +37,8 @@ export type SendMessageOut = {
   assistant_message: MessageOut
   message_ids: string[]
 }
+
+export type ModelProvider = 'gemini' | 'openai'
 
 export type UploadDocumentOut = {
   id: string

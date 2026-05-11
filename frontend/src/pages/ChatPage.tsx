@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api, ApiError } from '../api/client'
-import type { MessageOut } from '../api/types'
+import type { MessageOut, ModelProvider } from '../api/types'
 import { useAuth } from '../state/auth.tsx'
 
 type OptimisticMsg = MessageOut & { optimistic?: true }
@@ -17,6 +17,8 @@ type AttachmentMetadata = {
 }
 
 type TimelineItem = { kind: 'date'; label: string } | { kind: 'msg'; msg: MessageOut }
+
+const MODEL_PROVIDER_KEY = 'my_law_model_provider'
 
 function isSameDay(a: string, b: string) {
   return new Date(a).toDateString() === new Date(b).toDateString()
@@ -148,6 +150,9 @@ export function ChatPage() {
   const [text, setText] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
+  const [modelProvider, setModelProvider] = useState<ModelProvider>(() =>
+    localStorage.getItem(MODEL_PROVIDER_KEY) === 'openai' ? 'openai' : 'gemini',
+  )
   const [uploadNotice, setUploadNotice] = useState<string | null>(null)
   const [optimistic, setOptimistic] = useState<OptimisticMsg[]>([])
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -160,7 +165,7 @@ export function ChatPage() {
   })
 
   const sendMutation = useMutation({
-    mutationFn: async (content: string) => api.sendMessage(token!, chatId!, content),
+    mutationFn: async (content: string) => api.sendMessage(token!, chatId!, content, modelProvider),
     onSuccess: async () => {
       setOptimistic([])
       await Promise.all([
@@ -228,8 +233,9 @@ export function ChatPage() {
       setStreaming(true)
       setStreamText('')
       try {
-        await api.streamSendMessage(token!, chatId!, content, {
+        await api.streamSendMessage(token!, chatId!, content, modelProvider, {
           onDelta: (d) => setStreamText((prev) => prev + d),
+          onReplace: (content) => setStreamText(content),
           onDone: async () => {
             setStreaming(false)
             setStreamText('')
@@ -247,6 +253,11 @@ export function ChatPage() {
     }
 
     await sendMutation.mutateAsync(content)
+  }
+
+  const onModelChange = (provider: ModelProvider) => {
+    setModelProvider(provider)
+    localStorage.setItem(MODEL_PROVIDER_KEY, provider)
   }
 
   useEffect(() => {
@@ -411,9 +422,26 @@ export function ChatPage() {
             <input
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Ask a legal question..."
+              placeholder="שאל שאלה משפטית..."
               style={{ flex: 1 }}
             />
+            <select
+              value={modelProvider}
+              onChange={(e) => onModelChange(e.target.value as ModelProvider)}
+              disabled={sendMutation.isPending || streaming}
+              title="בחירת מודל"
+              style={{
+                borderRadius: 8,
+                border: '1px solid #cbd5e1',
+                padding: '10px 12px',
+                background: '#ffffff',
+                color: '#0f172a',
+                fontWeight: 700,
+              }}
+            >
+              <option value="gemini">Gemini</option>
+              <option value="openai">GPT-4o mini</option>
+            </select>
             <button
               disabled={sendMutation.isPending || streaming}
               type="submit"

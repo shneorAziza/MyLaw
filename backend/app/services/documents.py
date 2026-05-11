@@ -4,6 +4,7 @@ import asyncio
 import base64
 import inspect
 import io
+import logging
 from uuid import uuid4
 
 import fitz
@@ -16,6 +17,9 @@ from sqlalchemy.orm import Session
 
 from app.core.settings import settings
 from app.db.models import Document, DocumentEmbedding
+from app.services.gemini_errors import parse_gemini_error
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentProcessingError(Exception):
@@ -23,6 +27,8 @@ class DocumentProcessingError(Exception):
 
 
 class DocumentService:
+    OCR_RETRY_STATUSES = {503, 504}
+
     def __init__(self, db_session: Session):
         self.db = db_session
         if not settings.llm_api_key:
@@ -41,6 +47,7 @@ class DocumentService:
         file_path: str,
         file_type: str,
         user_id: str,
+        project_id: str,
         chat_id: str | None = None,
     ) -> dict:
         full_text = await self._extract_upload_text(file_bytes=file_bytes, file_type=file_type)
@@ -57,6 +64,7 @@ class DocumentService:
             Document(
                 id=doc_id,
                 user_id=user_id,
+                project_id=project_id,
                 chat_id=chat_id,
                 file_name=file_name,
                 file_path=file_path,
@@ -90,6 +98,7 @@ class DocumentService:
         file_name: str,
         file_path: str,
         user_id: str,
+        project_id: str,
         chat_id: str | None = None,
     ) -> dict:
         return await self.process_upload(
@@ -98,6 +107,7 @@ class DocumentService:
             file_path=file_path,
             file_type="pdf",
             user_id=user_id,
+            project_id=project_id,
             chat_id=chat_id,
         )
 
@@ -106,6 +116,7 @@ class DocumentService:
         *,
         query: str,
         user_id: str,
+        project_id: str | None = None,
         chat_id: str | None = None,
         limit: int = 5,
     ) -> list[dict]:
@@ -119,7 +130,9 @@ class DocumentService:
             .order_by(distance)
             .limit(limit)
         )
-        if chat_id:
+        if project_id:
+            stmt = stmt.where(Document.project_id == project_id)
+        elif chat_id:
             stmt = stmt.where(or_(Document.chat_id == chat_id, Document.chat_id.is_(None)))
 
         rows = self.db.execute(stmt).all()
@@ -134,14 +147,18 @@ class DocumentService:
             for embedding, document, distance_value in rows
         ]
 
-    def has_indexed_documents(self, *, user_id: str, chat_id: str | None = None) -> bool:
+    def has_indexed_documents(
+        self, *, user_id: str, project_id: str | None = None, chat_id: str | None = None
+    ) -> bool:
         stmt = (
             select(DocumentEmbedding.id)
             .join(Document, Document.id == DocumentEmbedding.document_id)
             .where(Document.user_id == user_id)
             .limit(1)
         )
-        if chat_id:
+        if project_id:
+            stmt = stmt.where(Document.project_id == project_id)
+        elif chat_id:
             stmt = stmt.where(or_(Document.chat_id == chat_id, Document.chat_id.is_(None)))
         return self.db.scalar(stmt) is not None
 
@@ -202,18 +219,44 @@ class DocumentService:
                 }
             ]
         }
-        url = f"{settings.llm_base_url or 'https://generativelanguage.googleapis.com'}/v1beta/models/{settings.llm_model}:generateContent"
-        async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.post(url, headers={"x-goog-api-key": settings.llm_api_key}, json=body)
+        model = settings.llm_ocr_model or settings.llm_model or "gemini-2.0-flash"
+        url = f"{settings.llm_base_url or 'https://generativelanguage.googleapis.com'}/v1beta/models/{model}:generateContent"
+        res = await self._post_ocr_with_retries(url=url, body=body)
 
         if res.status_code >= 400:
-            raise DocumentProcessingError(f"OCR failed: {res.status_code} {res.text}")
+            error = parse_gemini_error(
+                status_code=res.status_code,
+                body=res.text,
+                model=model,
+                operation="ocr",
+            )
+            logger.warning("gemini_ocr_failed", extra=error.metadata())
+            raise DocumentProcessingError(error.user_message)
 
         parts = (((res.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
         text = "\n".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
         if not text:
             raise DocumentProcessingError("OCR did not find readable text")
         return text
+
+    async def _post_ocr_with_retries(self, *, url: str, body: dict) -> httpx.Response:
+        delays = [1.0, 2.0, 4.0]
+        last_error: httpx.HTTPError | None = None
+
+        async with httpx.AsyncClient(timeout=90) as client:
+            for attempt in range(len(delays) + 1):
+                try:
+                    res = await client.post(url, headers={"x-goog-api-key": settings.llm_api_key}, json=body)
+                    if res.status_code not in self.OCR_RETRY_STATUSES or attempt == len(delays):
+                        return res
+                except httpx.HTTPError as e:
+                    last_error = e
+                    if attempt == len(delays):
+                        raise DocumentProcessingError(f"OCR request failed: {e}") from e
+
+                await asyncio.sleep(delays[attempt])
+
+        raise DocumentProcessingError(f"OCR request failed: {last_error}")
 
     def _split_text(self, text: str) -> list[str]:
         text_splitter = RecursiveCharacterTextSplitter(

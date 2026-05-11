@@ -25,11 +25,32 @@ class AuthLoginIn(BaseModel):
     password: str
 
 
+class ProjectOut(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class ProjectUpdateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
 class ChatOut(BaseModel):
     id: str
+    project_id: str
     title: str
     created_at: datetime
     updated_at: datetime
+
+
+class ChatCreateIn(BaseModel):
+    project_id: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class ChatCreateOut(BaseModel):
@@ -47,6 +68,7 @@ class MessageOut(BaseModel):
 
 class SendMessageIn(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
+    model_provider: str | None = Field(default=None, max_length=30)
 
 
 class SendMessageOut(BaseModel):
@@ -58,4 +80,3 @@ class SkillSpecOut(BaseModel):
     name: str
     description: str
     input_schema: dict
-

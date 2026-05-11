@@ -2,6 +2,8 @@ import type {
   ChatOut,
   DocumentSearchHit,
   MessageOut,
+  ModelProvider,
+  ProjectOut,
   SendMessageOut,
   TokenOut,
   UploadDocumentOut,
@@ -59,19 +61,35 @@ export const api = {
     request<TokenOut>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   me: (token: string) => request<UserOut>('/auth/me', { headers: authHeaders(token) }),
 
-  listChats: (token: string) => request<ChatOut[]>('/chats', { headers: authHeaders(token) }),
-  createChat: (token: string) => request<{ chat: ChatOut }>('/chats', { method: 'POST', headers: authHeaders(token) }),
+  listProjects: (token: string) => request<ProjectOut[]>('/projects', { headers: authHeaders(token) }),
+  createProject: (token: string, name: string) =>
+    request<ProjectOut>('/projects', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name }),
+    }),
+
+  listChats: (token: string, projectId?: string | null) =>
+    request<ChatOut[]>(`/chats${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, {
+      headers: authHeaders(token),
+    }),
+  createChat: (token: string, projectId?: string | null) =>
+    request<{ chat: ChatOut }>('/chats', {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ project_id: projectId ?? null }),
+    }),
   getChat: (token: string, chatId: string) => request<ChatOut>(`/chats/${chatId}`, { headers: authHeaders(token) }),
   deleteChat: (token: string, chatId: string) =>
     request<void>(`/chats/${chatId}`, { method: 'DELETE', headers: authHeaders(token) }),
 
   listMessages: (token: string, chatId: string) =>
     request<MessageOut[]>(`/chats/${chatId}/messages`, { headers: authHeaders(token) }),
-  sendMessage: (token: string, chatId: string, content: string) =>
+  sendMessage: (token: string, chatId: string, content: string, modelProvider?: ModelProvider) =>
     request<SendMessageOut>(`/chats/${chatId}/messages`, {
       method: 'POST',
       headers: authHeaders(token),
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, model_provider: modelProvider ?? null }),
     }),
 
   uploadDocument: async (token: string, file: File, chatId?: string | null) => {
@@ -112,15 +130,17 @@ export const api = {
     token: string,
     chatId: string,
     content: string,
+    modelProvider: ModelProvider,
     handlers: {
       onDelta: (delta: string) => void
+      onReplace: (content: string) => void
       onDone: (result: SendMessageOut) => void
     },
   ) => {
     const res = await fetch(`${API_BASE}/chats/${chatId}/messages:stream`, {
       method: 'POST',
       headers: { ...authHeaders(token), 'content-type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, model_provider: modelProvider }),
     })
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '')
@@ -148,6 +168,7 @@ export const api = {
         if (!line) continue
         const payload = JSON.parse(line.slice('data: '.length)) as any
         if (payload.type === 'delta') handlers.onDelta(payload.delta as string)
+        if (payload.type === 'replace') handlers.onReplace(payload.content as string)
         if (payload.type === 'done') handlers.onDone(payload as SendMessageOut)
       }
     }

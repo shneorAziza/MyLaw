@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUserDep, DbDep
-from app.db.models import Chat, Message
+from app.db.models import Chat, Message, Project
 from app.services.documents import DocumentProcessingError, DocumentService
 
 
@@ -19,6 +19,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 class DocumentSearchIn(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
+    project_id: str | None = None
     chat_id: str | None = None
     limit: int = Field(default=5, ge=1, le=20)
 
@@ -36,6 +37,7 @@ async def upload_document(
     db: DbDep,
     user: CurrentUserDep,
     file: UploadFile = File(...),
+    project_id: str | None = None,
     chat_id: str | None = None,
 ) -> dict:
     file_type = file.content_type or ""
@@ -51,6 +53,13 @@ async def upload_document(
             chat = db.get(Chat, chat_id)
             if chat is None or chat.user_id != user.id:
                 raise HTTPException(status_code=404, detail="Chat not found")
+            project_id = chat.project_id
+        elif project_id:
+            project = db.get(Project, project_id)
+            if project is None or project.user_id != user.id:
+                raise HTTPException(status_code=404, detail="Project not found")
+        else:
+            raise HTTPException(status_code=400, detail="Upload must be attached to a chat or project")
 
         file_content = await file.read()
         file_path.write_bytes(file_content)
@@ -62,6 +71,7 @@ async def upload_document(
             file_path=str(file_path),
             file_type="pdf" if file_type == "application/pdf" else file_type,
             user_id=user.id,
+            project_id=project_id,
             chat_id=chat_id,
         )
 
@@ -130,10 +140,22 @@ async def search_documents(
     user: CurrentUserDep,
 ) -> list[DocumentSearchHit]:
     try:
+        project_id = data.project_id
+        if data.chat_id:
+            chat = db.get(Chat, data.chat_id)
+            if chat is None or chat.user_id != user.id:
+                raise HTTPException(status_code=404, detail="Chat not found")
+            project_id = chat.project_id
+        elif project_id:
+            project = db.get(Project, project_id)
+            if project is None or project.user_id != user.id:
+                raise HTTPException(status_code=404, detail="Project not found")
+
         doc_service = DocumentService(db)
         hits = await doc_service.search_similar(
             query=data.query,
             user_id=user.id,
+            project_id=project_id,
             chat_id=data.chat_id,
             limit=data.limit,
         )
