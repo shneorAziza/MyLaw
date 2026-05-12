@@ -68,6 +68,14 @@ export const api = {
       headers: authHeaders(token),
       body: JSON.stringify({ name }),
     }),
+  updateProject: (token: string, projectId: string, name: string) =>
+    request<ProjectOut>(`/projects/${projectId}`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ name }),
+    }),
+  deleteProject: (token: string, projectId: string) =>
+    request<void>(`/projects/${projectId}`, { method: 'DELETE', headers: authHeaders(token) }),
 
   listChats: (token: string, projectId?: string | null) =>
     request<ChatOut[]>(`/chats${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, {
@@ -80,6 +88,12 @@ export const api = {
       body: JSON.stringify({ project_id: projectId ?? null }),
     }),
   getChat: (token: string, chatId: string) => request<ChatOut>(`/chats/${chatId}`, { headers: authHeaders(token) }),
+  updateChat: (token: string, chatId: string, title: string) =>
+    request<ChatOut>(`/chats/${chatId}`, {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify({ title }),
+    }),
   deleteChat: (token: string, chatId: string) =>
     request<void>(`/chats/${chatId}`, { method: 'DELETE', headers: authHeaders(token) }),
 

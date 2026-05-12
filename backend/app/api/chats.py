@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUserDep, DbDep
 from app.api.projects import get_or_create_default_project
-from app.api.schemas import ChatCreateIn, ChatCreateOut, ChatOut
+from app.api.schemas import ChatCreateIn, ChatCreateOut, ChatOut, ChatUpdateIn
 from app.db.models import Chat, Project
 
 
@@ -50,6 +50,17 @@ def get_chat(chat_id: str, db: DbDep, current_user: CurrentUserDep) -> ChatOut:
     chat = db.get(Chat, chat_id)
     if chat is None or chat.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+    return ChatOut.model_validate(chat, from_attributes=True)
+
+
+@router.patch("/{chat_id}", response_model=ChatOut)
+def update_chat(chat_id: str, data: ChatUpdateIn, db: DbDep, current_user: CurrentUserDep) -> ChatOut:
+    chat = db.get(Chat, chat_id)
+    if chat is None or chat.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+    chat.title = data.title.strip()
+    db.commit()
+    db.refresh(chat)
     return ChatOut.model_validate(chat, from_attributes=True)
 
 

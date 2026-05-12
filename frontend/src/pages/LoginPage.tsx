@@ -28,37 +28,36 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '12vh auto', padding: 20, border: '1px solid #e5e7eb', borderRadius: 12 }}>
-      <h2 style={{ marginTop: 0 }}>כניסה</h2>
-      <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <label>
-          אימייל
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required style={{ width: '100%' }} />
-        </label>
-        <label>
-          סיסמה
-          <input
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            type="password"
-            required
-            minLength={8}
-            style={{ width: '100%' }}
-          />
-        </label>
-        {error ? <div style={{ color: '#b91c1c' }}>{error}</div> : null}
-        <button disabled={loading} type="submit">
-          {loading ? 'מתחבר...' : 'כניסה'}
-        </button>
-      </form>
-      <div style={{ marginTop: 12 }}>
-        אין חשבון? <Link to="/register">הרשמה</Link>
-      </div>
-      <div style={{ marginTop: 8 }}>
-        <button type="button" onClick={() => nav('/')} style={{ width: '100%', backgroundColor: '#ffffff', color: '#0f172a' }}>
-          כניסה כאורח
-        </button>
-      </div>
-    </div>
+    <main className="authPage">
+      <section className="authCard" aria-labelledby="login-title">
+        <div className="eyebrow">My Law</div>
+        <h2 id="login-title">כניסה</h2>
+        <p>חזרה לסביבת העבודה המשפטית שלך.</p>
+
+        <form onSubmit={onSubmit} className="authForm">
+          <label>
+            אימייל
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
+          </label>
+          <label>
+            סיסמה
+            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required minLength={8} />
+          </label>
+          {error ? <div className="formError">{error}</div> : null}
+          <button disabled={loading} type="submit">
+            {loading ? 'מתחבר...' : 'כניסה'}
+          </button>
+        </form>
+
+        <div className="authLinks">
+          <div>
+            אין חשבון? <Link to="/register">יצירת חשבון</Link>
+          </div>
+          <button type="button" onClick={() => nav('/')} className="buttonSecondary">
+            חזרה לעמוד הראשי
+          </button>
+        </div>
+      </section>
+    </main>
   )
 }
